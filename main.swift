@@ -3,36 +3,63 @@ import Cocoa
 class AppDelegate: NSObject, NSApplicationDelegate {
     var mouseMonitor: Any?
     var keyboardMonitor: Any?
+
+    // debounce timers
     var lastMouseTimestamp: TimeInterval = 0
     var lastKeyboardTimestamp: TimeInterval = 0
+    var typingStartedTimestamp: TimeInterval = 0
+    var mouseMoveStartedTimestamp: TimeInterval = 0
+    var debounceTimer: Timer?
+    let debounceInterval: TimeInterval = 0.5
+
+    // total values to log
     var totalKeyPresses: Int = 0
+    var totalMouseMoves: Int = 0
     var totalMouseTime: TimeInterval = 0
     var totalKeyboardTime: TimeInterval = 0
-    var typingStartedTimestamp: TimeInterval = 0
-    let pauseInterval: TimeInterval = 0.1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("Tracking mouse and keyboard activity (time in seconds)")
 
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { event in
-            if self.lastMouseTimestamp != 0 {
-                let deltaTime = event.timestamp - self.lastMouseTimestamp
-                self.totalMouseTime += deltaTime
+            let now = event.timestamp
+            if self.mouseMoveStartedTimestamp == 0 {
+                self.mouseMoveStartedTimestamp = now
             }
-            // print("mouseMoved: \(event.locationInWindow)")
-            self.lastMouseTimestamp = event.timestamp
+            
+            // Invalidate previous timer if it exists
+            self.debounceTimer?.invalidate()
+            
+            // Schedule a new timer
+            self.debounceTimer = Timer.scheduledTimer(withTimeInterval: self.debounceInterval, repeats: false) { _ in
+                let deltaTime = now - self.mouseMoveStartedTimestamp
+                self.totalMouseTime += deltaTime
+                self.mouseMoveStartedTimestamp = 0
+                self.totalMouseMoves += 1
+                print("\t🐭 [add] added \(deltaTime) to totalMouseTime")
+                print("\t🐭 [move] mouseMoved: \(event.locationInWindow)")
+            }
+            
+            self.lastMouseTimestamp = now
         }
-        
+
         keyboardMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
             let now = event.timestamp
             if self.typingStartedTimestamp == 0 {
                 self.typingStartedTimestamp = now
             }
-            // print("keyDown: \(event.keyCode)")
-            if self.lastKeyboardTimestamp != 0 && now - self.lastKeyboardTimestamp > self.pauseInterval {
-                self.totalKeyboardTime += self.lastKeyboardTimestamp - self.typingStartedTimestamp
-                self.typingStartedTimestamp = now
+
+            // Invalidate previous timer if it exists
+            self.debounceTimer?.invalidate()
+            
+            // Schedule a new timer
+            self.debounceTimer = Timer.scheduledTimer(withTimeInterval: self.debounceInterval, repeats: false) { _ in
+                let deltaTime = now - self.typingStartedTimestamp
+                self.totalKeyboardTime += deltaTime
+                self.typingStartedTimestamp = 0
+                print("\t🎹 [add] added \(deltaTime) to totalKeyboardTime")
             }
+            print("\t🎹 [press] keyDown: \(event.keyCode)")
             self.totalKeyPresses += 1
             self.lastKeyboardTimestamp = now
         }
@@ -56,13 +83,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func dumpActivity() {
         let activityData: [String: Any] = [
-            "mouseTime": totalMouseTime,
-            "keyboardTime": totalKeyboardTime,
-            "totalKeyPresses": totalKeyPresses
+            "mouseTime": self.totalMouseTime,
+            "keyboardTime": self.totalKeyboardTime,
+            "totalKeyPresses": self.totalKeyPresses,
+            "totalMouseMoves": self.totalMouseMoves
         ]
 
         let jsonData = try! JSONSerialization.data(withJSONObject: activityData)
         let jsonString = String(data: jsonData, encoding: .utf8)!
+        
+        // print json to stdout
+        print(jsonString)
         
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
         let fileURL = homeDirectory.appendingPathComponent("activity.json")
